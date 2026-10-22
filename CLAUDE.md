@@ -155,6 +155,10 @@ Reuse these verbatim where they apply, instead of rewording:
 
 All rule changes go in `_data/rules.yml`, following the field order and patterns in "Rules YAML Structure" and "YAML Authoring Conventions" above, validated per "Query Validation" and cross-checked against "Common Review Pitfalls" below. Never modify files in `dist/` — they are auto-generated on merge.
 
+After editing `_data/rules.yml`, run `ruby .claude/scripts/check-rules.rb [slug ...]` (no slug = every exporter). It renders
+the rules through `dist/template.yml` into `test/rules/` exactly like the CI "Promtool check" workflow and runs
+`promtool check rules` on them. In cloud sessions, `.claude/hooks/session-start.sh` installs promtool and the liquid gem.
+
 ## Query Validation
 
 - When adding or updating an alert, verify that the PromQL query references metric series that actually exist in the related exporter. Check the exporter's documentation or source code to confirm series names.
