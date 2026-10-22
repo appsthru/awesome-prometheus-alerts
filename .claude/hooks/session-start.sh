@@ -1,6 +1,6 @@
 #!/bin/bash
-# Installs what .claude/scripts/check-rules.rb needs to validate _data/rules.yml with promtool,
-# mirroring .github/workflows/test.yml: the liquid gem (renders dist/template.yml) and promtool.
+# Installs what .claude/scripts/check_rules.py needs to validate _data/rules.yml with promtool,
+# mirroring .github/workflows/test.yml: python-liquid (renders dist/template.yml) and promtool.
 # Best effort: a failed install only prints a warning and never blocks the session.
 set -uo pipefail
 
@@ -11,14 +11,15 @@ fi
 PROM_VERSION="3.15.1"
 # Go module version of the same Prometheus release (v3.X.Y is published as v0.3XX.Y).
 PROM_MODULE_VERSION="v0.315.1"
-LIQUID_VERSION="5.5.1"
+PYTHON_LIQUID_VERSION="2.3.5"
 BIN_DIR="/usr/local/bin"
 # Upper bound for the from-source fallback, so a slow or broken build cannot hold the session.
 BUILD_TIMEOUT="300"
 
-install_liquid() {
-  ruby -e "gem 'liquid', '${LIQUID_VERSION}'" 2>/dev/null && return 0
-  gem install liquid -v "${LIQUID_VERSION}" --no-document
+install_python_deps() {
+  python3 -c "import liquid, yaml, sys; sys.exit(liquid.__version__ != '${PYTHON_LIQUID_VERSION}')" 2>/dev/null && return 0
+  pip3 install --quiet --root-user-action=ignore "python-liquid==${PYTHON_LIQUID_VERSION}" pyyaml ||
+    pip3 install --quiet --root-user-action=ignore --break-system-packages "python-liquid==${PYTHON_LIQUID_VERSION}" pyyaml
 }
 
 install_promtool() {
@@ -41,10 +42,10 @@ install_promtool() {
     -o "${BIN_DIR}/promtool" ./cmd/promtool)
 }
 
-install_liquid || echo "WARNING: liquid gem not installed; check-rules.rb cannot render the rules." >&2
+install_python_deps || echo "WARNING: python-liquid not installed; check_rules.py cannot render the rules." >&2
 if install_promtool; then
   promtool --version | head -1
 else
-  echo "WARNING: promtool not installed; check-rules.rb will skip the promtool step." >&2
+  echo "WARNING: promtool not installed; check_rules.py will skip the promtool step." >&2
 fi
 exit 0
