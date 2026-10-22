@@ -30,6 +30,12 @@ data["groups"].each do |group|
 end
 abort "No exporter matches: #{only.join(", ")}" if files.empty?
 
+# Rendering alone already proves the YAML loads and the template applies; without promtool, stop there.
+unless system("promtool", "--version", out: File::NULL, err: File::NULL)
+  warn "WARNING: promtool not found, skipped `promtool check rules` (#{files.size} file(s) rendered in test/rules/)."
+  exit 0
+end
+
 ok = system("promtool", "check", "rules", *files, out: File::NULL)
 # Re-run verbosely only when something failed, so a green run stays short.
 system("promtool", "check", "rules", *files) unless ok

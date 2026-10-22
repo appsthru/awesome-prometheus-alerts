@@ -1,7 +1,8 @@
 #!/bin/bash
 # Installs what .claude/scripts/check-rules.rb needs to validate _data/rules.yml with promtool,
 # mirroring .github/workflows/test.yml: the liquid gem (renders dist/template.yml) and promtool.
-set -euo pipefail
+# Best effort: a failed install only prints a warning and never blocks the session.
+set -uo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
@@ -12,26 +13,38 @@ PROM_VERSION="3.15.1"
 PROM_MODULE_VERSION="v0.315.1"
 LIQUID_VERSION="5.5.1"
 BIN_DIR="/usr/local/bin"
+# Upper bound for the from-source fallback, so a slow or broken build cannot hold the session.
+BUILD_TIMEOUT="300"
 
-if ! ruby -e "gem 'liquid', '${LIQUID_VERSION}'" 2>/dev/null; then
+install_liquid() {
+  ruby -e "gem 'liquid', '${LIQUID_VERSION}'" 2>/dev/null && return 0
   gem install liquid -v "${LIQUID_VERSION}" --no-document
-fi
+}
 
-if ! promtool --version 2>/dev/null | grep -q "version ${PROM_VERSION}"; then
+install_promtool() {
+  promtool --version 2>/dev/null | grep -q "version ${PROM_VERSION}" && return 0
+  local tmp url src
   tmp="$(mktemp -d)"
-  trap 'rm -rf "${tmp}"' EXIT
+  trap 'rm -rf "${tmp}"' RETURN
   url="https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
-  if curl -fsSL --retry 2 -o "${tmp}/prometheus.tar.gz" "${url}"; then
-    tar -xzf "${tmp}/prometheus.tar.gz" -C "${tmp}" --strip-components=1 "prometheus-${PROM_VERSION}.linux-amd64/promtool"
-    install -m 0755 "${tmp}/promtool" "${BIN_DIR}/promtool"
-  else
-    # github.com is not in every environment's network allowlist; build from the Go module proxy instead (~3-4 min).
-    echo "promtool release download failed, building ${PROM_MODULE_VERSION} from source" >&2
-    src="$(go mod download -json "github.com/prometheus/prometheus@${PROM_MODULE_VERSION}" | jq -r .Dir)"
-    (cd "${src}" && GOWORK=off GOFLAGS=-mod=mod go build \
-      -ldflags "-X github.com/prometheus/common/version.Version=${PROM_VERSION}" \
-      -o "${BIN_DIR}/promtool" ./cmd/promtool)
+  if curl -fsSL --retry 2 --max-time 60 -o "${tmp}/prometheus.tar.gz" "${url}"; then
+    tar -xzf "${tmp}/prometheus.tar.gz" -C "${tmp}" --strip-components=1 "prometheus-${PROM_VERSION}.linux-amd64/promtool" &&
+      install -m 0755 "${tmp}/promtool" "${BIN_DIR}/promtool"
+    return
   fi
-fi
+  # github.com is not in every environment's network allowlist; build from the Go module proxy instead (~3-4 min).
+  echo "promtool release download failed, building ${PROM_MODULE_VERSION} from source" >&2
+  command -v go >/dev/null || return 1
+  src="$(go mod download -json "github.com/prometheus/prometheus@${PROM_MODULE_VERSION}" | jq -r .Dir)" || return 1
+  (cd "${src}" && GOWORK=off GOFLAGS=-mod=mod timeout "${BUILD_TIMEOUT}" go build \
+    -ldflags "-X github.com/prometheus/common/version.Version=${PROM_VERSION}" \
+    -o "${BIN_DIR}/promtool" ./cmd/promtool)
+}
 
-promtool --version | head -1
+install_liquid || echo "WARNING: liquid gem not installed; check-rules.rb cannot render the rules." >&2
+if install_promtool; then
+  promtool --version | head -1
+else
+  echo "WARNING: promtool not installed; check-rules.rb will skip the promtool step." >&2
+fi
+exit 0
